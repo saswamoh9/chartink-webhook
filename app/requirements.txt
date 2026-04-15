@@ -1,0 +1,6 @@
+flask==3.0.3
+gunicorn==22.0.0
+playwright==1.44.0
+google-cloud-firestore==2.16.1
+google-cloud-secret-manager==2.20.2
+google-auth==2.30.0
