@@ -38,12 +38,13 @@ gcloud run deploy "${SERVICE}" \
   --region="${REGION}" \
   --platform=managed \
   --allow-unauthenticated \
-  --memory=2Gi \
+  --memory=1Gi \
   --cpu=1 \
   --concurrency=10 \
   --timeout=300 \
   --min-instances=0 \
-  --max-instances=3 \
+  --max-instances=1 \
+  --no-cpu-throttling \
   --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID},USE_SECRET_MANAGER=true" \
   --service-account="${SA}"
 
