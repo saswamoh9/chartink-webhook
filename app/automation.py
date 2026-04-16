@@ -116,12 +116,15 @@ class ChartinkSession:
         return False
 
     def _clear_search(self, search):
-        """Reliably clear the search input."""
-        search.click()
-        self._page.wait_for_timeout(200)
-        search.press("Control+a")
-        search.press("Delete")
-        self._page.wait_for_timeout(200)
+        """Reliably clear the search input.
+        Uses fill('') instead of click+keypress — more resilient when the
+        page is mid-update (e.g. right after adding a stock)."""
+        try:
+            search.wait_for(state="visible", timeout=10000)
+            search.fill("")
+            self._page.wait_for_timeout(300)
+        except Exception:
+            self._page.wait_for_timeout(1000)  # let page settle, then move on
 
     def add_stock(self, symbol: str) -> str:
         p            = self._page
@@ -170,8 +173,7 @@ class ChartinkSession:
                         if text.lower() == company_name.lower():
                             log.info(f"  Exact match [{i}]: '{text}' — clicking")
                             dropdown.nth(i).click()
-                            p.wait_for_timeout(1000)
-                            self._clear_search(search)   # ready for next stock
+                            p.wait_for_timeout(2000)     # let page process the add
                             log.info(f"  {symbol} -> added (exact match)")
                             return "added"
                     except Exception:
@@ -185,8 +187,7 @@ class ChartinkSession:
                         if text and "<!--" not in text:
                             log.info(f"  First match [{i}]: '{text}' — clicking")
                             dropdown.nth(i).click()
-                            p.wait_for_timeout(1000)
-                            self._clear_search(search)   # ready for next stock
+                            p.wait_for_timeout(2000)     # let page process the add
                             log.info(f"  {symbol} -> added")
                             return "added"
                     except Exception:
