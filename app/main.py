@@ -4,7 +4,7 @@ import signal
 import threading
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
-from config import WEBHOOK_ROUTES, NOTIFICATION_CONFIG
+from config import WEBHOOK_ROUTES, NOTIFICATION_CONFIG, WEBHOOK_LINKS
 from automation import ChartinkSession
 from notify import send_notification, build_notification
 
@@ -124,7 +124,7 @@ def _parse_payload(req) -> dict:
     return {}
 
 
-def _run_automation(symbols: list, watchlist_url: str, screener: str, prices: list):
+def _run_automation(symbols: list, watchlist_url: str, screener: str, prices: list, slug: str = ""):
     """Stage 1 only — add stocks to watchlist via Playwright."""
     log.info(f"Automation started: {symbols} -> {watchlist_url}")
     results = []
@@ -147,6 +147,7 @@ def _run_automation(symbols: list, watchlist_url: str, screener: str, prices: li
                     "symbol":        r["symbol"],
                     "watchlist_url": watchlist_url,
                     "screener":      screener,
+                    "slug":          slug,
                     "trigger_price": prices[i] if i < len(prices) else "N/A",
                     "status":        r["status"],
                     "logged_at":     firestore.SERVER_TIMESTAMP,
@@ -265,7 +266,7 @@ def webhook(slug: str):
 
     if add_to_watchlist and watchlist_url:
         log.info(f"[{slug}] Stage 1: adding to watchlist {watchlist_url}")
-        _spawn(_run_automation, (symbols, watchlist_url, screener, prices))
+        _spawn(_run_automation, (symbols, watchlist_url, screener, prices, slug))
         mode = "watchlist_queued"
     else:
         log.info(f"[{slug}] Stage 2: signal only — logging to Firestore")
@@ -287,17 +288,24 @@ def correlation_report():
     if not _DB:
         return jsonify({"error": "Firestore not configured — set GCP_PROJECT_ID"}), 503
 
-    days          = min(int(request.args.get("days", 30)), 90)   # cap at 90 days
-    symbol_filter = request.args.get("symbol", "").upper().strip()
-    fmt           = request.args.get("format", "json").lower()
+    days      = min(int(request.args.get("days", 30)), 90)
+    primary   = request.args.get("primary",   "").strip()
+    secondary = request.args.get("secondary", "").strip()
+    fmt       = request.args.get("format", "json").lower()
 
     try:
         from report import build_correlation_report, report_to_csv
-        data = build_correlation_report(_DB, days=days, symbol_filter=symbol_filter)
+        data = build_correlation_report(
+            _DB,
+            webhook_links    = WEBHOOK_LINKS,
+            days             = days,
+            primary_filter   = primary,
+            secondary_filter = secondary,
+        )
 
         if fmt == "csv":
             from flask import Response
-            filename = f"report_{days}d{'_' + symbol_filter if symbol_filter else ''}.csv"
+            filename = f"report_{days}d.csv"
             return Response(
                 report_to_csv(data),
                 mimetype="text/csv",

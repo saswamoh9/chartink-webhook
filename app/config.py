@@ -13,6 +13,25 @@ WEBHOOK_ROUTES: dict[str, str] = {
     "red-doji-green":                                                    None,
 }
 
+# Defines which secondary webhooks are "downstream" of each primary webhook.
+# Used by /report to show how quickly stocks from the EMA watchlist
+# trigger each secondary screener.
+WEBHOOK_LINKS: dict[str, list[str]] = {
+    "ema_15min_up": [
+        "bullish_engulfing_current_close_more_previous_high_cpr_crossings",
+        "bullish_again_crossing_15_min_ema_up",
+        "macd_crossover",
+        "red-doji-green",
+    ],
+    "ema_15min_down": [
+        "bearish_engulfing_current_close_less_previous_low_cpr_crossings",
+        "bearish_again_crossing_15_min_ema_down",
+    ],
+}
+# 15_min_ema_Up is an alias — same links as ema_15min_up
+WEBHOOK_LINKS["15_min_ema_Up"] = WEBHOOK_LINKS["ema_15min_up"]
+
+
 NOTIFICATION_CONFIG: dict[str, dict] = {
 
     # ── Primary webhooks — watchlist only, no push notification ──────────────
