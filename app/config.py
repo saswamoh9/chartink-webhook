@@ -1,6 +1,7 @@
 WEBHOOK_ROUTES: dict[str, str] = {
-    "ema_15min_up":   "https://chartink.com/watchlist/1492831",
-    "ema_15min_down": "https://chartink.com/watchlist/REPLACE_BEARISH_ID",
+    "ema_15min_up":    "https://chartink.com/watchlist/1492831",
+    "15_min_ema_Up":   "https://chartink.com/watchlist/1492831",   # alias used in Chartink alert URL
+    "ema_15min_down":  "https://chartink.com/watchlist/REPLACE_BEARISH_ID",
     "bullish_engulfing_current_close_more_previous_high_cpr_crossings": None,
     "bullish_again_crossing_15_min_ema_up":                             None,
     "bearish_engulfing_current_close_less_previous_low_cpr_crossings":  None,
@@ -10,6 +11,15 @@ WEBHOOK_ROUTES: dict[str, str] = {
 
 NOTIFICATION_CONFIG: dict[str, dict] = {
     "ema_15min_up": {
+        "add_to_watchlist":   True,
+        "title":              "EMA Watchlist Updated",
+        "title_template":     "{count} stock(s) added at {time}",
+        "symbol_description": "Added to EMA Bullish universe",
+        "footer":             "Waiting for secondary signal to trade",
+        "sound":              "none",
+        "priority":           -1,
+    },
+    "15_min_ema_Up": {
         "add_to_watchlist":   True,
         "title":              "EMA Watchlist Updated",
         "title_template":     "{count} stock(s) added at {time}",

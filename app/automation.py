@@ -28,12 +28,12 @@ class ChartinkSession:
     LOGIN_URL = "https://chartink.com/login"
 
     def __init__(self, email: str, password: str):
-        self.email              = email
-        self.password           = password
-        self._pw                = None
-        self._browser           = None
-        self._ctx               = None
-        self._page: Page | None = None
+        self.email                    = email
+        self.password                 = password
+        self._pw                      = None
+        self._browser                 = None
+        self._ctx                     = None
+        self._page: Page | None       = None
         self._current_url: str | None = None
 
     def start(self):
@@ -115,77 +115,111 @@ class ChartinkSession:
         log.error(f"Could not open watchlist. URL: {p.url}")
         return False
 
+    def _clear_search(self, search):
+        """Reliably clear the search input."""
+        search.click()
+        self._page.wait_for_timeout(200)
+        search.press("Control+a")
+        search.press("Delete")
+        self._page.wait_for_timeout(200)
+
     def add_stock(self, symbol: str) -> str:
         p            = self._page
         company_name = resolve_name(symbol)
 
         try:
-            # Confirmed from HTML: input id="search"
             search = p.locator("#search").first
-            search.wait_for(state="visible", timeout=10000)
+            search.wait_for(state="visible", timeout=15000)
 
             # Try company name first, then raw symbol as fallback
-            for term in ([company_name, symbol] if company_name != symbol else [symbol]):
-                log.info(f"  Typing: '{term}'")
+            terms = [company_name, symbol] if company_name != symbol else [symbol]
 
-                # Click to focus, clear, then type
-                search.click()
-                p.wait_for_timeout(300)
-                search.fill("")
-                p.wait_for_timeout(200)
-                search.type(term, delay=100)
-                p.wait_for_timeout(2000)
+            for term in terms:
+                log.info(f"  Searching: '{term}'")
 
-                # Confirmed from HTML: dropdown is div.watchlist span
-                # Each suggestion is a <span class="hover:bg-gray-200 ...">
+                # ── Clear & fill (fill is instant — no per-char delay) ──────────
+                self._clear_search(search)
+                search.fill(term)
+                p.wait_for_timeout(500)          # wait for debounce
+
+                # ── Wait for dropdown to actually appear (up to 6s) ────────────
+                try:
+                    p.wait_for_selector(
+                        "div.watchlist span",
+                        state="visible",
+                        timeout=6000,
+                    )
+                except PWTimeout:
+                    log.warning(f"  Dropdown didn't appear for '{term}' — trying next term")
+                    self._clear_search(search)
+                    continue
+
                 dropdown = p.locator("div.watchlist span")
                 count    = dropdown.count()
-                log.info(f"  Dropdown spans found: {count}")
+                log.info(f"  Dropdown items: {count}")
 
-                if count > 0:
-                    # Find exact match first (company name from nse.json)
-                    for i in range(count):
-                        try:
-                            text = dropdown.nth(i).inner_text().strip()
-                            if text.lower() == company_name.lower():
-                                log.info(f"  Exact match: '{text}' — clicking")
-                                dropdown.nth(i).click()
-                                p.wait_for_timeout(1500)
-                                log.info(f"  {symbol} -> added (exact match)")
-                                return "added"
-                        except Exception:
-                            continue
+                if count == 0:
+                    log.warning(f"  Empty dropdown for '{term}'")
+                    self._clear_search(search)
+                    continue
 
-                    # No exact match — click first valid suggestion
-                    for i in range(count):
-                        try:
-                            text = dropdown.nth(i).inner_text().strip()
-                            log.info(f"    [{i}] '{text}'")
-                            if text and "<!--" not in text:
-                                log.info(f"  Clicking first suggestion: '{text}'")
-                                dropdown.nth(i).click()
-                                p.wait_for_timeout(1500)
-                                log.info(f"  {symbol} -> added")
-                                return "added"
-                        except Exception:
-                            continue
+                # ── Prefer exact company-name match ───────────────────────────
+                for i in range(count):
+                    try:
+                        text = dropdown.nth(i).inner_text().strip()
+                        if text.lower() == company_name.lower():
+                            log.info(f"  Exact match [{i}]: '{text}' — clicking")
+                            dropdown.nth(i).click()
+                            p.wait_for_timeout(1000)
+                            self._clear_search(search)   # ready for next stock
+                            log.info(f"  {symbol} -> added (exact match)")
+                            return "added"
+                    except Exception:
+                        continue
 
-            log.warning(f"  {symbol} -> not_found")
+                # ── Fall back: click first non-empty suggestion ───────────────
+                for i in range(count):
+                    try:
+                        text = dropdown.nth(i).inner_text().strip()
+                        log.info(f"    [{i}] '{text}'")
+                        if text and "<!--" not in text:
+                            log.info(f"  First match [{i}]: '{text}' — clicking")
+                            dropdown.nth(i).click()
+                            p.wait_for_timeout(1000)
+                            self._clear_search(search)   # ready for next stock
+                            log.info(f"  {symbol} -> added")
+                            return "added"
+                    except Exception:
+                        continue
+
+            log.warning(f"  {symbol} -> not_found (exhausted all terms)")
             return "not_found"
 
         except PWTimeout:
             log.warning(f"  {symbol} -> timeout")
             return "timeout"
         except Exception as e:
-            log.error(f"  {symbol} -> error: {e}")
+            log.error(f"  {symbol} -> error: {e}", exc_info=True)
             return "error"
 
     def process_batch(self, items: list[tuple[str, str]]) -> list[dict]:
+        """Process all (symbol, watchlist_url) pairs.
+        Navigates to each watchlist only once — reuses the open page for
+        consecutive stocks going to the same watchlist."""
         results = []
         for symbol, watchlist_url in items:
             if not self.open_watchlist(watchlist_url):
-                results.append({"symbol": symbol, "watchlist": watchlist_url, "status": "watchlist_error"})
+                results.append({
+                    "symbol":   symbol,
+                    "watchlist": watchlist_url,
+                    "status":   "watchlist_error",
+                })
                 continue
             status = self.add_stock(symbol)
-            results.append({"symbol": symbol, "watchlist": watchlist_url, "status": status})
+            results.append({
+                "symbol":   symbol,
+                "watchlist": watchlist_url,
+                "status":   status,
+            })
+            log.info(f"  [{symbol}] => {status}")
         return results
