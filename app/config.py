@@ -10,6 +10,7 @@ WEBHOOK_ROUTES: dict[str, str] = {
     "bearish_engulfing_current_close_less_previous_low_cpr_crossings":  None,
     "bearish_again_crossing_15_min_ema_down":                           None,
     "macd_crossover":                                                    None,
+    "red-doji-green":                                                    None,
 }
 
 NOTIFICATION_CONFIG: dict[str, dict] = {
@@ -93,6 +94,16 @@ NOTIFICATION_CONFIG: dict[str, dict] = {
         "title":              "MACD Crossover Signal",
         "title_template":     "{count} stock(s) at {time}",
         "symbol_description": "MACD crossed with EMA confirmation",
+        "footer":             "Action: Enter on candle close confirmation",
+        "sound":              "magic",
+        "priority":           1,
+    },
+    "red-doji-green": {
+        "add_to_watchlist":   False,
+        "send_notification":  True,
+        "title":              "RED -> DOJI -> GREEN close above Red Open + CPR Crossings",
+        "title_template":     "{count} stock(s) at {time}",
+        "symbol_description": "RED -> DOJI -> GREEN + CPR Crossings",
         "footer":             "Action: Enter on candle close confirmation",
         "sound":              "magic",
         "priority":           1,
