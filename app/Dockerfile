@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py automation.py config.py notify.py nse.json ./
+COPY main.py automation.py config.py notify.py report.py nse.json ./
 
 RUN groupadd -r app && useradd -r -g app app
 USER app

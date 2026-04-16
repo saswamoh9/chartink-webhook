@@ -282,6 +282,35 @@ def webhook(slug: str):
     }), 202
 
 
+@app.route("/report")
+def correlation_report():
+    if not _DB:
+        return jsonify({"error": "Firestore not configured — set GCP_PROJECT_ID"}), 503
+
+    days          = min(int(request.args.get("days", 30)), 90)   # cap at 90 days
+    symbol_filter = request.args.get("symbol", "").upper().strip()
+    fmt           = request.args.get("format", "json").lower()
+
+    try:
+        from report import build_correlation_report, report_to_csv
+        data = build_correlation_report(_DB, days=days, symbol_filter=symbol_filter)
+
+        if fmt == "csv":
+            from flask import Response
+            filename = f"report_{days}d{'_' + symbol_filter if symbol_filter else ''}.csv"
+            return Response(
+                report_to_csv(data),
+                mimetype="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={filename}"},
+            )
+
+        return jsonify(data)
+
+    except Exception as e:
+        log.error(f"Report error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/scale-up", methods=["POST"])
 def scale_up():
     log.info("Scale-up ping — service is warm.")
