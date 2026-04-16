@@ -56,13 +56,24 @@ def _drain_threads(timeout: int = 290):
 signal.signal(signal.SIGTERM, lambda *_: _drain_threads())
 
 
+def _route_mode(slug: str) -> str:
+    cfg = NOTIFICATION_CONFIG.get(slug, {})
+    watchlist = cfg.get("add_to_watchlist", False)
+    notify    = cfg.get("send_notification", False)
+    if watchlist and not notify:
+        return "primary (watchlist only)"
+    if notify and not watchlist:
+        return "secondary (notify only)"
+    if watchlist and notify:
+        return "watchlist + notify"
+    return "log only"
+
+
 def _startup():
     global _EMAIL, _PASSWORD, _PUSHOVER_TOKEN, _PUSHOVER_USER, _DB
     log.info("=== Chartink Webhook Service starting ===")
     for slug, url in WEBHOOK_ROUTES.items():
-        cfg  = NOTIFICATION_CONFIG.get(slug, {})
-        mode = "watchlist + notify" if cfg.get("add_to_watchlist") else "notify only"
-        log.info(f"  /webhook/{slug} [{mode}]")
+        log.info(f"  /webhook/{slug} [{_route_mode(slug)}]")
 
     use_secrets = bool(PROJECT_ID and os.environ.get("USE_SECRET_MANAGER", "true") == "true")
     if use_secrets:
@@ -172,7 +183,7 @@ def health():
         "active_threads": active_threads,
         "routes": {
             slug: {
-                "mode":      "watchlist+notify" if NOTIFICATION_CONFIG.get(slug, {}).get("add_to_watchlist") else "notify_only",
+                "mode":     _route_mode(slug),
                 "watchlist": url,
             }
             for slug, url in WEBHOOK_ROUTES.items()
@@ -190,7 +201,9 @@ def list_routes():
         slug: {
             "webhook_url":        f"{service_url}/webhook/{slug}",
             "watchlist_url":      url,
-            "mode":               "watchlist + notify" if NOTIFICATION_CONFIG.get(slug, {}).get("add_to_watchlist") else "notify only",
+            "add_to_watchlist":   NOTIFICATION_CONFIG.get(slug, {}).get("add_to_watchlist", False),
+            "send_notification":  NOTIFICATION_CONFIG.get(slug, {}).get("send_notification", False),
+            "mode":               _route_mode(slug),
             "notification_title": NOTIFICATION_CONFIG.get(slug, {}).get("title", "N/A"),
             "symbol_description": NOTIFICATION_CONFIG.get(slug, {}).get("symbol_description", "N/A"),
         }
@@ -223,8 +236,8 @@ def webhook(slug: str):
 
     log.info(f"[{slug}] '{screener}' -> {symbols}")
 
-    # ── Step 1: Send iPhone notification INSTANTLY ────────────────────────────
-    if notif_cfg and _PUSHOVER_TOKEN and _PUSHOVER_USER:
+    # ── Step 1: Send push notification (secondary webhooks only) ────────────
+    if notif_cfg.get("send_notification", False) and _PUSHOVER_TOKEN and _PUSHOVER_USER:
         try:
             title, message = build_notification(
                 slug     = slug,
@@ -244,6 +257,8 @@ def webhook(slug: str):
             )
         except Exception as e:
             log.warning(f"Notification error: {e}")
+    else:
+        log.info(f"[{slug}] Notification skipped (primary webhook — watchlist only)")
 
     # ── Step 2: Add to watchlist OR just log signal ───────────────────────────
     add_to_watchlist = notif_cfg.get("add_to_watchlist", False)
