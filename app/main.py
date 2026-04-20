@@ -292,6 +292,7 @@ def correlation_report():
     primary   = request.args.get("primary",   "").strip()
     secondary = request.args.get("secondary", "").strip()
     fmt       = request.args.get("format", "json").lower()
+    intraday  = request.args.get("intraday", "false").lower() == "true"
 
     try:
         from report import build_correlation_report, report_to_csv
@@ -301,6 +302,7 @@ def correlation_report():
             days             = days,
             primary_filter   = primary,
             secondary_filter = secondary,
+            intraday         = intraday,
         )
 
         if fmt == "csv":
