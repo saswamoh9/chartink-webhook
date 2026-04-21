@@ -1,20 +1,30 @@
 """
 report.py — Primary → Secondary webhook correlation report
 
-Enhancements vs. v1:
-  - IST timestamps on all events  (primary_at_ist / secondary_at_ist / fired_at_ist)
-  - Intraday filter (?intraday=true): only count matches where both events fall
-    within the same NSE session (09:15–15:30 IST, same calendar date)
-  - Price-change histogram per link  (price_histogram field)
-  - Enriched unmatched_signals: each entry now includes screener, IST time, price
-    instead of just the symbol string
+Query params (all optional, combinable):
+  days=30                  last N calendar days (default 30, max 90)
+  date=YYYY-MM-DD          single IST trading day (overrides days)
+  from=YYYY-MM-DD          start of IST date range (use with to=)
+  to=YYYY-MM-DD            end   of IST date range (use with from=)
+  primary=<slug>           filter to one primary slug
+  secondary=<slug>         filter to one secondary slug
+  intraday=true            only matches within 09:15–15:30 IST same session
+  format=json|csv          output format (default json)
 
-Endpoint:
-  GET /report?days=30
-              &primary=ema_15min_up
-              &secondary=bullish_engulfing_...
-              &intraday=true
-              &format=json|csv
+Response shape:
+  summary   — overall stats, date range used, total matches
+  by_link[] — per primary→secondary pair
+    ├── stats             timing stats (count / avg / min / max / median minutes)
+    ├── price_histogram   bucketed price_change_pct + win_rate_pct
+    ├── by_date[]         matches grouped by IST calendar date (newest first)
+    │     ├── date        "YYYY-MM-DD"
+    │     ├── stats       per-day timing stats
+    │     ├── price_histogram  per-day histogram
+    │     └── matches[]  individual match records
+    ├── matches[]         all matches (sorted by delta_minutes)
+    ├── pending_symbols   in watchlist, never triggered secondary
+    └── unmatched_signals triggered secondary without prior watchlist entry
+          [{symbol, screener, fired_at_ist, trigger_price}]
 """
 import csv
 import io
@@ -28,7 +38,7 @@ MARKET_OPEN  = (9, 15)   # 09:15 IST — NSE market open
 MARKET_CLOSE = (15, 30)  # 15:30 IST — NSE market close
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Date / time helpers ───────────────────────────────────────────────────────
 
 def _to_ist(dt) -> str:
     """Convert a UTC-aware datetime to a human-readable IST string."""
@@ -40,8 +50,56 @@ def _to_ist(dt) -> str:
         return str(dt)
 
 
+def _ist_date_str(dt) -> str:
+    """Return just the IST calendar date (YYYY-MM-DD) for a UTC-aware datetime."""
+    return dt.astimezone(IST).strftime("%Y-%m-%d")
+
+
+def _parse_ist_date(date_str: str) -> datetime:
+    """Parse 'YYYY-MM-DD' and return IST midnight (start of that day)."""
+    d = datetime.strptime(date_str.strip(), "%Y-%m-%d")
+    return d.replace(tzinfo=IST)
+
+
+def _ist_day_bounds(date_str: str) -> tuple[datetime, datetime]:
+    """Return (start_utc, end_utc) covering the full IST calendar date."""
+    start = _parse_ist_date(date_str)
+    end   = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _resolve_time_range(
+    days: int,
+    date: str,
+    from_date: str,
+    to_date: str,
+) -> tuple[datetime, datetime, str]:
+    """
+    Resolve query params into (start_utc, end_utc, label).
+    Priority: date > from/to > days
+    """
+    now = datetime.now(timezone.utc)
+
+    if date:
+        start, end = _ist_day_bounds(date)
+        return start, end, date
+
+    if from_date or to_date:
+        start = _parse_ist_date(from_date).astimezone(timezone.utc) if from_date else (now - timedelta(days=days))
+        if to_date:
+            _, end = _ist_day_bounds(to_date)
+        else:
+            end = now
+        label = f"{from_date or '...'} → {to_date or 'today'}"
+        return start, end, label
+
+    # default: last N days
+    start = now - timedelta(days=days)
+    return start, now, f"last {days} days"
+
+
 def _is_market_hours(dt) -> bool:
-    """Return True if dt (UTC-aware) falls within NSE trading hours."""
+    """True if dt (UTC-aware) falls within NSE trading hours."""
     ist = dt.astimezone(IST)
     return MARKET_OPEN <= (ist.hour, ist.minute) <= MARKET_CLOSE
 
@@ -56,6 +114,8 @@ def _same_session(dt1, dt2) -> bool:
         and _is_market_hours(dt2)
     )
 
+
+# ── Stats / histogram helpers ─────────────────────────────────────────────────
 
 def _delta_human(minutes: float) -> str:
     if minutes < 1:
@@ -88,10 +148,7 @@ def _stats(deltas: list[float]) -> dict:
 
 
 def _price_buckets(matches: list[dict]) -> dict:
-    """
-    Bucket matches by price_change_pct into labelled ranges and compute
-    a simple win-rate (% of matches where the secondary fired above entry price).
-    """
+    """Bucket price_change_pct and compute win_rate_pct."""
     b = {
         "< -2%":      0,
         "-2% to -1%": 0,
@@ -103,13 +160,13 @@ def _price_buckets(matches: list[dict]) -> dict:
     }
     for m in matches:
         pct = m.get("price_change_pct")
-        if pct is None:       b["N/A"] += 1
-        elif pct < -2:        b["< -2%"] += 1
-        elif pct < -1:        b["-2% to -1%"] += 1
-        elif pct < 0:         b["-1% to 0%"] += 1
-        elif pct < 1:         b["0% to 1%"] += 1
-        elif pct < 2:         b["1% to 2%"] += 1
-        else:                 b["> 2%"] += 1
+        if pct is None:     b["N/A"] += 1
+        elif pct < -2:      b["< -2%"] += 1
+        elif pct < -1:      b["-2% to -1%"] += 1
+        elif pct < 0:       b["-1% to 0%"] += 1
+        elif pct < 1:       b["0% to 1%"] += 1
+        elif pct < 2:       b["1% to 2%"] += 1
+        else:               b["> 2%"] += 1
 
     positive = b["0% to 1%"] + b["1% to 2%"] + b["> 2%"]
     negative = b["< -2%"] + b["-2% to -1%"] + b["-1% to 0%"]
@@ -120,31 +177,47 @@ def _price_buckets(matches: list[dict]) -> dict:
     return b
 
 
+def _group_by_date(matches: list[dict]) -> list[dict]:
+    """Group matches by IST calendar date (newest first). Each day gets its own stats + histogram."""
+    groups: dict[str, list[dict]] = {}
+    for m in matches:
+        # primary_at_ist is "YYYY-MM-DD HH:MM:SS IST" — take first 10 chars
+        d = m.get("primary_at_ist", "")[:10]
+        groups.setdefault(d, []).append(m)
+
+    result = []
+    for d in sorted(groups.keys(), reverse=True):   # newest first
+        day_matches = groups[d]
+        result.append({
+            "date":            d,
+            "stats":           _stats([m["delta_minutes"] for m in day_matches]),
+            "price_histogram": _price_buckets(day_matches),
+            "matches":         day_matches,
+        })
+    return result
+
+
 # ── Core report builder ───────────────────────────────────────────────────────
 
 def build_correlation_report(
     db,
     webhook_links: dict,
     days: int = 30,
+    date: str = "",
+    from_date: str = "",
+    to_date: str = "",
     primary_filter: str = "",
     secondary_filter: str = "",
     intraday: bool = False,
 ) -> dict:
     """
-    For each primary → secondary link in webhook_links:
-      1. Fetch all watchlist additions for the primary slug
-      2. Fetch all trade signals for the secondary slug
-      3. Match stocks that appear in both, signal AFTER addition
-         (if intraday=True, both events must be in the same NSE session)
-      4. Compute delta, price change, and histogram
+    Build the primary→secondary correlation report.
 
-    Returns:
-      summary   — overall stats across all links
-      by_link   — per-link breakdown with matches, histogram, pending, unmatched
+    Time range priority: date > from_date/to_date > days
     """
     from google.cloud import firestore
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    start_utc, end_utc, period_label = _resolve_time_range(days, date, from_date, to_date)
 
     # ── Determine which links to process ─────────────────────────────────
     links_to_process: list[tuple[str, str]] = []
@@ -171,7 +244,8 @@ def build_correlation_report(
             db.collection("automation_results")
               .where("slug",      "==", primary_slug)
               .where("status",    "==", "added")
-              .where("logged_at", ">=", cutoff)
+              .where("logged_at", ">=", start_utc)
+              .where("logged_at", "<=", end_utc)
         )
         docs = [d for doc in q.stream() if (d := doc.to_dict()) and d.get("logged_at")]
         additions_by_slug[primary_slug] = docs
@@ -185,29 +259,30 @@ def build_correlation_report(
         q = (
             db.collection("trade_signals")
               .where("slug",      "==", secondary_slug)
-              .where("logged_at", ">=", cutoff)
+              .where("logged_at", ">=", start_utc)
+              .where("logged_at", "<=", end_utc)
         )
         docs = [d for doc in q.stream() if (d := doc.to_dict()) and d.get("logged_at")]
         signals_by_slug[secondary_slug] = docs
         log.info(f"Report: {len(docs)} signals for slug '{secondary_slug}'")
 
     # ── Build per-link correlation ────────────────────────────────────────
-    by_link: list[dict]    = []
+    by_link: list[dict]     = []
     all_deltas: list[float] = []
 
     for primary_slug, secondary_slug in links_to_process:
         additions = additions_by_slug.get(primary_slug, [])
         signals   = signals_by_slug.get(secondary_slug, [])
 
-        # Build symbol → sorted-by-time additions lookup
+        # symbol → time-sorted additions
         addition_map: dict[str, list] = {}
         for a in additions:
             addition_map.setdefault(a["symbol"], []).append(a)
         for sym in addition_map:
             addition_map[sym].sort(key=lambda x: x["logged_at"])
 
-        matches:           list[dict] = []
-        unmatched_raw:     list[dict] = []   # enriched, may have dupes
+        matches:          list[dict] = []
+        unmatched_raw:    list[dict] = []
         addition_symbols = set(addition_map.keys())
         signal_symbols   = set()
 
@@ -216,7 +291,6 @@ def build_correlation_report(
             signal_time = signal["logged_at"]
             signal_symbols.add(sym)
 
-            # ── Build enriched unmatched entry (used if no prior addition) ─
             def _unmatched_entry():
                 return {
                     "symbol":        sym,
@@ -229,7 +303,6 @@ def build_correlation_report(
                 unmatched_raw.append(_unmatched_entry())
                 continue
 
-            # Most recent addition BEFORE this signal
             prior = [a for a in addition_map[sym] if a["logged_at"] <= signal_time]
             if not prior:
                 unmatched_raw.append(_unmatched_entry())
@@ -238,7 +311,6 @@ def build_correlation_report(
             latest     = prior[-1]
             delta_mins = (signal_time - latest["logged_at"]).total_seconds() / 60
 
-            # ── Intraday filter ───────────────────────────────────────────
             if intraday and not _same_session(latest["logged_at"], signal_time):
                 continue
 
@@ -246,10 +318,10 @@ def build_correlation_report(
 
             matches.append({
                 "symbol":             sym,
-                # UTC (for machine use / CSV joins)
+                # UTC (machine use / CSV joins)
                 "primary_at":         latest["logged_at"].isoformat(),
                 "secondary_at":       signal_time.isoformat(),
-                # IST (human-readable)
+                # IST (human readable)
                 "primary_at_ist":     _to_ist(latest["logged_at"]),
                 "secondary_at_ist":   _to_ist(signal_time),
                 "primary_price":      latest.get("trigger_price", "N/A"),
@@ -266,7 +338,7 @@ def build_correlation_report(
 
         matches.sort(key=lambda x: x["delta_minutes"])
 
-        # Deduplicate unmatched by (symbol, fired_at_ist) — keep earliest
+        # Deduplicate unmatched by (symbol, fired_at_ist) — keep earliest per pair
         seen: set[tuple] = set()
         deduped_unmatched: list[dict] = []
         for u in sorted(unmatched_raw, key=lambda x: x["fired_at_ist"]):
@@ -275,7 +347,6 @@ def build_correlation_report(
                 seen.add(key)
                 deduped_unmatched.append(u)
 
-        # Stocks added to watchlist that never triggered the secondary
         pending = sorted(addition_symbols - signal_symbols)
 
         by_link.append({
@@ -283,20 +354,20 @@ def build_correlation_report(
             "secondary_slug":    secondary_slug,
             "stats":             _stats([m["delta_minutes"] for m in matches]),
             "price_histogram":   _price_buckets(matches),
+            "by_date":           _group_by_date(matches),   # ← NEW: day-wise breakdown
             "matches":           matches,
             "pending_symbols":   pending,
             "unmatched_signals": deduped_unmatched,
         })
 
-    # Sort links: most matches first
     by_link.sort(key=lambda x: x["stats"]["count"], reverse=True)
 
-    # ── Overall summary ───────────────────────────────────────────────────
     now_utc = datetime.now(timezone.utc)
     summary = {
-        "period_days":      days,
+        "period":           period_label,
+        "period_start_ist": _to_ist(start_utc),
+        "period_end_ist":   _to_ist(end_utc),
         "intraday_only":    intraday,
-        "generated_at":     now_utc.isoformat(),
         "generated_at_ist": _to_ist(now_utc),
         "links_processed":  len(by_link),
         "total_matches":    sum(l["stats"]["count"] for l in by_link),
@@ -314,9 +385,9 @@ def report_to_csv(report: dict) -> str:
     fields = [
         "primary_slug",     "secondary_slug",
         "symbol",
-        "primary_at_ist",   "primary_price",   "primary_screener",
-        "secondary_at_ist", "secondary_price",  "secondary_screener",
-        "delta_minutes",    "delta_human",      "price_change_pct",
+        "primary_at_ist",   "primary_price",    "primary_screener",
+        "secondary_at_ist", "secondary_price",   "secondary_screener",
+        "delta_minutes",    "delta_human",       "price_change_pct",
     ]
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()

@@ -289,6 +289,9 @@ def correlation_report():
         return jsonify({"error": "Firestore not configured — set GCP_PROJECT_ID"}), 503
 
     days      = min(int(request.args.get("days", 30)), 90)
+    date      = request.args.get("date",      "").strip()
+    from_date = request.args.get("from",      "").strip()
+    to_date   = request.args.get("to",        "").strip()
     primary   = request.args.get("primary",   "").strip()
     secondary = request.args.get("secondary", "").strip()
     fmt       = request.args.get("format", "json").lower()
@@ -300,6 +303,9 @@ def correlation_report():
             _DB,
             webhook_links    = WEBHOOK_LINKS,
             days             = days,
+            date             = date,
+            from_date        = from_date,
+            to_date          = to_date,
             primary_filter   = primary,
             secondary_filter = secondary,
             intraday         = intraday,
