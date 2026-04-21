@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chartink Signal Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    details[open] summary .chevron { transform: rotate(180deg); }
+    .chevron { transition: transform 0.2s; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans text-gray-800">
+
+<!-- ── Top Bar ─────────────────────────────────────────────────────────── -->
+<header class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-10 shadow-sm">
+  <div class="flex items-center gap-3">
+    <span class="text-xl">📈</span>
+    <h1 class="text-lg font-bold text-gray-900">Chartink Signal Dashboard</h1>
+  </div>
+  <span id="generatedAt" class="text-xs text-gray-400"></span>
+</header>
+
+<div class="max-w-screen-2xl mx-auto px-4 py-5 space-y-4">
+
+  <!-- ── Filters ────────────────────────────────────────────────────────── -->
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-3 items-end">
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</label>
+        <input id="fDate" type="date"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">From</label>
+        <input id="fFrom" type="date"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">To</label>
+        <input id="fTo" type="date"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Last N Days</label>
+        <input id="fDays" type="number" value="30" min="1" max="90"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Primary</label>
+        <select id="fPrimary"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">All Primary</option>
+        </select>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Secondary</label>
+        <select id="fSecondary"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">All Secondary</option>
+        </select>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Symbol</label>
+        <input id="fSymbol" type="text" placeholder="e.g. RELIANCE"
+          class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+
+      <div class="flex flex-col gap-1.5 justify-end">
+        <label class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer">
+          <input id="fIntraday" type="checkbox" class="rounded accent-blue-600" />
+          Intraday Only
+        </label>
+        <button onclick="loadReport()"
+          class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">
+          Load Report
+        </button>
+      </div>
+
+      <div class="flex flex-col gap-1.5 justify-end">
+        <span class="text-xs text-gray-400 invisible">x</span>
+        <a id="csvLink" href="#" download
+          class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg text-center transition-colors">
+          ⬇ CSV
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Loading / Error ───────────────────────────────────────────────── -->
+  <div id="stateLoading" class="hidden text-center py-16">
+    <div class="text-4xl animate-spin inline-block">⏳</div>
+    <p class="text-gray-400 mt-3 text-sm">Fetching signals from Firestore…</p>
+  </div>
+  <div id="stateError"
+    class="hidden bg-red-50 border border-red-200 rounded-2xl p-4 text-red-700 text-sm font-medium"></div>
+
+  <!-- ── Summary Cards ─────────────────────────────────────────────────── -->
+  <div id="summaryCards" class="hidden grid grid-cols-2 md:grid-cols-5 gap-3">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Total Matches</p>
+      <p id="cMatches" class="text-3xl font-black text-gray-900 mt-1">—</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Avg Δ Time</p>
+      <p id="cAvg" class="text-3xl font-black text-blue-700 mt-1">—</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Median Δ Time</p>
+      <p id="cMedian" class="text-3xl font-black text-blue-700 mt-1">—</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Period</p>
+      <p id="cPeriod" class="text-sm font-bold text-gray-800 mt-1 leading-snug">—</p>
+    </div>
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Intraday</p>
+      <p id="cIntraday" class="text-sm font-bold text-gray-800 mt-1">—</p>
+    </div>
+  </div>
+
+  <!-- ── Link Tabs ─────────────────────────────────────────────────────── -->
+  <div id="linkTabs" class="hidden flex gap-2 flex-wrap"></div>
+
+  <!-- ── Main Content ───────────────────────────────────────────────────── -->
+  <div id="mainContent" class="hidden space-y-3"></div>
+
+</div><!-- /container -->
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════════
+let reportData    = null;
+let activeLinkIdx = 0;
+let viewMode      = 'by_date';   // 'by_date' | 'flat'
+let sortCol       = 'primary_at_ist';
+let sortDir       = 'asc';
+let symbolFilter  = '';
+
+// ════════════════════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadSlugs();
+  // Default to today
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local tz
+  document.getElementById('fDate').value = today;
+  loadReport();
+});
+
+document.getElementById('fSymbol').addEventListener('input', e => {
+  symbolFilter = e.target.value.trim().toUpperCase();
+  if (reportData) renderActiveLink();
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Load slugs from /routes to populate dropdowns
+// ════════════════════════════════════════════════════════════════════════════
+async function loadSlugs() {
+  try {
+    const res    = await fetch('/routes');
+    const routes = await res.json();
+    const pSel   = document.getElementById('fPrimary');
+    const sSel   = document.getElementById('fSecondary');
+    Object.entries(routes).forEach(([slug, info]) => {
+      if (info.add_to_watchlist)  pSel.innerHTML += `<option value="${slug}">${slug}</option>`;
+      if (info.send_notification) sSel.innerHTML += `<option value="${slug}">${slug}</option>`;
+    });
+  } catch (e) { console.warn('Could not load slugs', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Build query params from filters
+// ════════════════════════════════════════════════════════════════════════════
+function buildParams(primaryOverride, secondaryOverride) {
+  const p        = new URLSearchParams();
+  const date     = document.getElementById('fDate').value;
+  const from     = document.getElementById('fFrom').value;
+  const to       = document.getElementById('fTo').value;
+  const days     = document.getElementById('fDays').value || '30';
+  const primary  = primaryOverride  ?? document.getElementById('fPrimary').value;
+  const secondary= secondaryOverride?? document.getElementById('fSecondary').value;
+  const intraday = document.getElementById('fIntraday').checked;
+
+  if (date)         p.set('date', date);
+  else if (from||to){ if(from) p.set('from',from); if(to) p.set('to',to); }
+  else              p.set('days', days);
+
+  if (primary)   p.set('primary',   primary);
+  if (secondary) p.set('secondary', secondary);
+  if (intraday)  p.set('intraday',  'true');
+  return p;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Load report
+// ════════════════════════════════════════════════════════════════════════════
+async function loadReport() {
+  symbolFilter = document.getElementById('fSymbol').value.trim().toUpperCase();
+  showState('loading');
+  try {
+    const res  = await fetch('/report?' + buildParams().toString());
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    const data = await res.json();
+    if (data.summary?.error) throw new Error(data.summary.error);
+    reportData    = data;
+    activeLinkIdx = 0;
+    sortCol       = 'primary_at_ist';
+    sortDir       = 'asc';
+    renderReport();
+    showState('content');
+  } catch (e) {
+    showState('error', e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Render report
+// ════════════════════════════════════════════════════════════════════════════
+function renderReport() {
+  const { summary, by_link } = reportData;
+
+  // Summary cards
+  const os = summary.overall_stats || {};
+  document.getElementById('cMatches').textContent = summary.total_matches ?? 0;
+  document.getElementById('cAvg').textContent     = os.avg    != null ? os.avg    + 'm' : '—';
+  document.getElementById('cMedian').textContent  = os.median != null ? os.median + 'm' : '—';
+  document.getElementById('cPeriod').innerHTML    = `${summary.period}<br><span class="text-xs text-gray-400 font-normal">${summary.period_start_ist?.slice(0,10)} → ${summary.period_end_ist?.slice(0,10)}</span>`;
+  document.getElementById('cIntraday').textContent= summary.intraday_only ? '✅ Yes' : '❌ No';
+  document.getElementById('generatedAt').textContent = 'Generated: ' + (summary.generated_at_ist || '');
+
+  // Tabs
+  const tabsEl = document.getElementById('linkTabs');
+  tabsEl.innerHTML = '';
+  by_link.forEach((link, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = `${shortSlug(link.secondary_slug)} (${link.stats.count})`;
+    btn.className = tabClass(i === activeLinkIdx);
+    btn.onclick = () => { activeLinkIdx = i; refreshTabs(); renderActiveLink(); };
+    tabsEl.appendChild(btn);
+  });
+
+  renderActiveLink();
+}
+
+function refreshTabs() {
+  document.getElementById('linkTabs').querySelectorAll('button').forEach((b, i) => {
+    b.className = tabClass(i === activeLinkIdx);
+  });
+}
+
+function tabClass(active) {
+  return `px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${
+    active ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+  }`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Render active link
+// ════════════════════════════════════════════════════════════════════════════
+function renderActiveLink() {
+  const link = reportData?.by_link[activeLinkIdx];
+  const el   = document.getElementById('mainContent');
+  if (!link) { el.innerHTML = '<p class="text-gray-400 text-sm py-6 text-center">No data.</p>'; return; }
+
+  // Update CSV link for this specific link
+  const csvParams = buildParams(link.primary_slug, link.secondary_slug);
+  csvParams.set('format', 'csv');
+  document.getElementById('csvLink').href = '/report?' + csvParams.toString();
+  document.getElementById('csvLink').download = `report_${link.secondary_slug}.csv`;
+
+  const filteredFlat = symbolFilter
+    ? link.matches.filter(m => m.symbol.includes(symbolFilter))
+    : [...link.matches];
+
+  const matchCount = filteredFlat.length;
+
+  el.innerHTML = `
+    <!-- Link header -->
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <div class="flex flex-wrap items-center gap-6">
+        <div>
+          <p class="text-xs text-gray-400 uppercase tracking-wide font-semibold">Primary Webhook</p>
+          <p class="text-sm font-bold text-blue-700 mt-0.5">${link.primary_slug}</p>
+        </div>
+        <div class="text-gray-300 text-2xl font-thin">→</div>
+        <div>
+          <p class="text-xs text-gray-400 uppercase tracking-wide font-semibold">Secondary Webhook</p>
+          <p class="text-sm font-bold text-purple-700 mt-0.5">${link.secondary_slug}</p>
+        </div>
+        <div class="ml-auto flex gap-6">
+          ${pill('Matches',     link.stats.count)}
+          ${pill('Min Δ',       link.stats.min    != null ? link.stats.min    + 'm' : '—')}
+          ${pill('Avg Δ',       link.stats.avg    != null ? link.stats.avg    + 'm' : '—')}
+          ${pill('Median Δ',    link.stats.median != null ? link.stats.median + 'm' : '—')}
+          ${pill('Max Δ',       link.stats.max    != null ? link.stats.max    + 'm' : '—')}
+          ${pill('Win Rate',    link.price_histogram?.win_rate_pct != null
+                                  ? link.price_histogram.win_rate_pct + '%' : '—',
+                                link.price_histogram?.win_rate_pct >= 50 ? 'text-green-600' : 'text-red-600')}
+        </div>
+      </div>
+    </div>
+
+    <!-- Price histogram -->
+    ${renderHistogram(link.price_histogram)}
+
+    <!-- View controls -->
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-bold text-gray-700">
+        Matches
+        <span class="text-gray-400 font-normal">
+          ${symbolFilter ? `${matchCount} of ${link.matches.length} (filtered)` : matchCount}
+        </span>
+      </h2>
+      <div class="flex gap-2 items-center">
+        <button onclick="setView('by_date')"
+          class="text-xs px-3 py-1 rounded-lg font-semibold transition-colors ${viewMode==='by_date'?'bg-blue-100 text-blue-700':'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}">
+          By Date
+        </button>
+        <button onclick="setView('flat')"
+          class="text-xs px-3 py-1 rounded-lg font-semibold transition-colors ${viewMode==='flat'?'bg-blue-100 text-blue-700':'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}">
+          Flat Table
+        </button>
+      </div>
+    </div>
+
+    <!-- Table area -->
+    <div id="matchesView">
+      ${viewMode === 'by_date'
+          ? renderByDate(link.by_date)
+          : renderFlatTable(filteredFlat)}
+    </div>
+
+    <!-- Pending -->
+    ${renderPending(link.pending_symbols)}
+
+    <!-- Unmatched -->
+    ${renderUnmatched(link.unmatched_signals)}
+  `;
+}
+
+function setView(mode) {
+  viewMode = mode;
+  renderActiveLink();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// By-date view (default) — collapsible day sections
+// ════════════════════════════════════════════════════════════════════════════
+function renderByDate(byDate) {
+  if (!byDate?.length) return emptyMsg('No matches found.');
+
+  const days = byDate.map(day => {
+    const dayMatches = symbolFilter
+      ? day.matches.filter(m => m.symbol.includes(symbolFilter))
+      : day.matches;
+    if (!dayMatches.length) return '';
+
+    const wr  = day.price_histogram?.win_rate_pct;
+    const wrBadge = wr != null
+      ? `<span class="text-xs font-semibold px-2 py-0.5 rounded-full ${wr>=50?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}">Win ${wr}%</span>`
+      : '';
+
+    return `
+      <details class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden" open>
+        <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 select-none gap-3">
+          <div class="flex items-center gap-3 flex-wrap">
+            <span class="font-bold text-gray-900">${day.date}</span>
+            <span class="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">${dayMatches.length} matches</span>
+            <span class="text-xs text-gray-500">Avg Δ ${day.stats.avg ?? '—'}m · Median ${day.stats.median ?? '—'}m</span>
+            ${wrBadge}
+          </div>
+          <svg class="chevron w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </summary>
+        <div class="overflow-x-auto border-t border-gray-100">
+          ${matchTable(dayMatches)}
+        </div>
+      </details>
+    `;
+  }).join('');
+
+  return days || emptyMsg('No matches for the selected symbol.');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Flat table view (sortable)
+// ════════════════════════════════════════════════════════════════════════════
+function renderFlatTable(matches) {
+  if (!matches.length) return emptyMsg('No matches found.');
+
+  // Sort
+  const sorted = [...matches].sort((a, b) => {
+    let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
+    if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
+    return sortDir === 'asc'
+      ? String(va).localeCompare(String(vb))
+      : String(vb).localeCompare(String(va));
+  });
+
+  return `
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            ${sortTh('symbol',         'Symbol')}
+            ${sortTh('primary_at_ist', 'Primary Signal (IST)')}
+            ${sortTh('primary_price',  'Primary ₹')}
+            ${sortTh('secondary_at_ist','Secondary Signal (IST)')}
+            ${sortTh('secondary_price','Secondary ₹')}
+            ${sortTh('delta_minutes',  'Δ Time')}
+            ${sortTh('price_change_pct','Change %')}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">${sorted.map(matchRow).join('')}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function sortTh(col, label) {
+  const active = sortCol === col;
+  const arrow  = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  return `<th onclick="doSort('${col}')"
+    class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide
+           cursor-pointer hover:text-gray-800 select-none whitespace-nowrap
+           ${active ? 'text-blue-600' : ''}">${label}${arrow}</th>`;
+}
+
+function doSort(col) {
+  sortDir = (sortCol === col && sortDir === 'asc') ? 'desc' : 'asc';
+  sortCol = col;
+  const link = reportData.by_link[activeLinkIdx];
+  const el   = document.getElementById('matchesView');
+  const filtered = symbolFilter ? link.matches.filter(m => m.symbol.includes(symbolFilter)) : [...link.matches];
+  el.innerHTML = renderFlatTable(filtered);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Shared table body (used by both views)
+// ════════════════════════════════════════════════════════════════════════════
+function matchTable(rows) {
+  return `
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="bg-gray-50">
+          <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Symbol</th>
+          <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Primary Signal (IST)</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Primary ₹</th>
+          <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Secondary Signal (IST)</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Secondary ₹</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Δ Time</th>
+          <th class="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Change %</th>
+          <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Screener</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">${rows.map(matchRow).join('')}</tbody>
+    </table>
+  `;
+}
+
+function matchRow(m) {
+  const pct      = m.price_change_pct;
+  const pctColor = pct == null ? 'text-gray-400'
+                 : pct  > 0   ? 'text-green-600 font-bold'
+                 : pct  < 0   ? 'text-red-600 font-bold'
+                 :               'text-gray-600';
+  const pctStr   = pct == null ? '—' : (pct > 0 ? '+' : '') + pct + '%';
+  const pctBg    = pct == null ? '' : pct > 0 ? 'bg-green-50' : pct < 0 ? 'bg-red-50' : '';
+
+  return `
+    <tr class="hover:bg-blue-50 transition-colors ${pctBg}">
+      <td class="px-4 py-2.5 font-black text-gray-900 tracking-wide">${m.symbol}</td>
+      <td class="px-4 py-2.5 whitespace-nowrap">${fmtIST(m.primary_at_ist)}</td>
+      <td class="px-4 py-2.5 text-right font-mono text-gray-700">${m.primary_price ?? '—'}</td>
+      <td class="px-4 py-2.5 whitespace-nowrap">${fmtIST(m.secondary_at_ist)}</td>
+      <td class="px-4 py-2.5 text-right font-mono text-gray-700">${m.secondary_price ?? '—'}</td>
+      <td class="px-4 py-2.5 text-right font-semibold text-blue-600">${m.delta_human}</td>
+      <td class="px-4 py-2.5 text-right ${pctColor}">${pctStr}</td>
+      <td class="px-4 py-2.5 text-xs text-gray-400 truncate max-w-xs" title="${m.secondary_screener || ''}">${m.secondary_screener || '—'}</td>
+    </tr>
+  `;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Price histogram
+// ════════════════════════════════════════════════════════════════════════════
+function renderHistogram(hist) {
+  if (!hist) return '';
+  const bars = [
+    ['< -2%',      hist['< -2%'],      'bg-red-600'],
+    ['-2% to -1%', hist['-2% to -1%'], 'bg-red-400'],
+    ['-1% to 0%',  hist['-1% to 0%'],  'bg-orange-400'],
+    ['0% to 1%',   hist['0% to 1%'],   'bg-emerald-400'],
+    ['1% to 2%',   hist['1% to 2%'],   'bg-emerald-500'],
+    ['> 2%',       hist['> 2%'],       'bg-emerald-700'],
+  ];
+  const maxV = Math.max(...bars.map(b => b[1]), 1);
+  const wr   = hist.win_rate_pct;
+  return `
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Price Change Histogram</p>
+        ${wr != null ? `
+          <span class="text-sm font-bold ${wr>=50?'text-green-600':'text-red-600'}">
+            Win Rate ${wr}%
+            <span class="text-xs font-normal text-gray-400 ml-1">(${hist.positive_count}↑ ${hist.negative_count}↓ ${hist.N_A||hist['N/A']||0} N/A)</span>
+          </span>` : ''}
+      </div>
+      <div class="flex items-end gap-2" style="height:72px">
+        ${bars.map(([lbl, val, color]) => {
+          const h = Math.max(Math.round((val / maxV) * 56), val > 0 ? 6 : 0);
+          return `
+            <div class="flex-1 flex flex-col items-center gap-1">
+              <span class="text-xs font-semibold text-gray-600">${val || ''}</span>
+              <div class="${color} rounded-t w-full" style="height:${h}px" title="${lbl}: ${val}"></div>
+              <span class="text-center text-gray-400 leading-tight" style="font-size:9px">${lbl}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Pending & Unmatched
+// ════════════════════════════════════════════════════════════════════════════
+function renderPending(pending) {
+  if (!pending?.length) return '';
+  return `
+    <details class="bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden">
+      <summary class="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-amber-100">
+        <span class="text-sm font-bold text-amber-800">⏳ Pending — In watchlist, no secondary signal yet (${pending.length})</span>
+        <svg class="chevron w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="px-4 py-3 flex flex-wrap gap-2">
+        ${pending.map(s => `<span class="text-xs bg-amber-100 border border-amber-300 text-amber-800 font-bold px-2 py-0.5 rounded">${s}</span>`).join('')}
+      </div>
+    </details>
+  `;
+}
+
+function renderUnmatched(unmatched) {
+  if (!unmatched?.length) return '';
+  const filtered = symbolFilter ? unmatched.filter(u => u.symbol.includes(symbolFilter)) : unmatched;
+  return `
+    <details class="bg-red-50 border border-red-200 rounded-2xl overflow-hidden">
+      <summary class="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-red-100">
+        <span class="text-sm font-bold text-red-800">
+          ⚠️ Unmatched — Secondary fired without prior watchlist entry
+          (${filtered.length}${symbolFilter && filtered.length !== unmatched.length ? ' of ' + unmatched.length : ''})
+        </span>
+        <svg class="chevron w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="overflow-x-auto border-t border-red-100">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-red-50">
+              <th class="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide">Symbol</th>
+              <th class="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide">Screener</th>
+              <th class="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide">Fired At (IST)</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-red-600 uppercase tracking-wide">Price ₹</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-red-100">
+            ${filtered.map(u => `
+              <tr class="hover:bg-red-100 transition-colors">
+                <td class="px-4 py-2.5 font-black text-gray-900">${u.symbol}</td>
+                <td class="px-4 py-2.5 text-xs text-gray-500 truncate max-w-xs" title="${u.screener||''}">${u.screener || '—'}</td>
+                <td class="px-4 py-2.5 whitespace-nowrap">${fmtIST(u.fired_at_ist)}</td>
+                <td class="px-4 py-2.5 text-right font-mono text-gray-700">${u.trigger_price || '—'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Utility
+// ════════════════════════════════════════════════════════════════════════════
+function fmtIST(s) {
+  // Input: "2026-04-21 09:30:00 IST"
+  if (!s || s === 'N/A') return '<span class="text-gray-400">—</span>';
+  const parts = s.split(' ');
+  if (parts.length < 2) return `<span>${s}</span>`;
+  const [dateStr, timeStr] = parts;
+  // Format date nicely
+  const d = new Date(dateStr + 'T00:00:00');
+  const dateLbl = d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+  return `<span class="font-semibold text-gray-900">${timeStr}</span> <span class="text-xs text-gray-400">${dateLbl}</span>`;
+}
+
+function pill(label, value, colorClass = 'text-gray-900') {
+  return `
+    <div class="text-center">
+      <p class="text-xs text-gray-400 uppercase tracking-wide font-semibold">${label}</p>
+      <p class="text-base font-black mt-0.5 ${colorClass}">${value}</p>
+    </div>
+  `;
+}
+
+function emptyMsg(msg) {
+  return `<div class="bg-white rounded-2xl border border-gray-200 py-10 text-center text-gray-400 text-sm">${msg}</div>`;
+}
+
+const SLUG_SHORT = {
+  'bullish_engulfing_current_close_more_previous_high_cpr_crossings': 'Bull Engulf + CPR',
+  'bullish_again_crossing_15_min_ema_up':                             'Bull EMA Re-Cross',
+  'bearish_engulfing_current_close_less_previous_low_cpr_crossings':  'Bear Engulf + CPR',
+  'bearish_again_crossing_15_min_ema_down':                           'Bear EMA Re-Cross',
+  'macd_crossover':                                                    'MACD Crossover',
+  'red-doji-green':                                                    'Red→Doji→Green',
+};
+function shortSlug(slug) { return SLUG_SHORT[slug] || slug; }
+
+function showState(state, msg = '') {
+  document.getElementById('stateLoading').classList.toggle('hidden', state !== 'loading');
+  document.getElementById('stateError').classList.toggle('hidden',   state !== 'error');
+  ['summaryCards','linkTabs','mainContent'].forEach(id =>
+    document.getElementById(id).classList.toggle('hidden', state !== 'content')
+  );
+  if (state === 'error') document.getElementById('stateError').textContent = '⚠️ ' + msg;
+}
+</script>
+</body>
+</html>

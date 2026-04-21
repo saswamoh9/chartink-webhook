@@ -175,6 +175,13 @@ def _log_signal(symbols: list, screener: str, prices: list, slug: str):
         log.warning(f"Firestore signal log failed: {e}")
 
 
+@app.route("/dashboard")
+def dashboard():
+    path = os.path.join(os.path.dirname(__file__), "dashboard.html")
+    with open(path, encoding="utf-8") as f:
+        return f.read(), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/healthz")
 def health():
     with _bg_lock:
