@@ -1,0 +1,17 @@
+# Local report tool — never push to GCP repo
+local-report/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment files
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
